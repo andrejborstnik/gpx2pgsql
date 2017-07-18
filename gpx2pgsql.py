@@ -1,9 +1,10 @@
-#!/usr/bin/python2
+#!/usr/bin/python2.7
+import sys
+sys.path.append('/usr/local/lib/python2.7/site-packages')
 
 import psycopg2
 import argparse
 import os
-import sys
 import tarfile
 import getpass
 from xml.dom import pulldom
@@ -27,7 +28,13 @@ def create_tables(proj=4326):
         gpx_id integer not null references gpx_info (gpx_id),
         segment_id integer not null,
         track_date date,
-        track geometry(linestring, {0}) not null,
+        track geometry(linestringm, {0}) not null,
+        hard_acceleration integer,
+        hard_acceleration_severity integer,
+        hard_deceleration float,
+        hard_deceleration_severity float,
+        accelerate_stopped integer,
+        accelerate_breaking integer,
         primary key (gpx_id, segment_id)
     );""".format(proj))
     cur.close()
@@ -118,24 +125,29 @@ def process_gpx(db, gpx_id, f, options):
                 lat = float(node.getAttribute('lat'))
                 lon = float(node.getAttribute('lon'))
                 dist = abs(lon - lastNode[0]) + abs(lat - lastNode[1]) if lastNode else options.dmin * 2
-                lastNode = (lon, lat)
+
+                events.expandNode(node)
+                t = node.getElementsByTagName('time');
+                time = t[0].firstChild.data
+                lastNode = (lon, lat, time)
+
                 if dist > options.dmax:
                     needWrite = True
-                    polledPoints = [(lon, lat)]
+                    polledPoints = [(lon, lat, time)]
                 elif dist >= options.dmin:
-                    points.append((lon, lat))
+                    points.append((lon, lat, time))
                     if len(points) >= options.pmax:
                         needWrite = True
 
-                    events.expandNode(node)
                     t = node.getElementsByTagName('time');
                     if t and t[0].firstChild and len(t[0].firstChild.data) >= 10:
                         lastDate = t[0].firstChild.data[0:10]
+
         elif event == pulldom.END_ELEMENT and node.localName == 'trkseg':
             needWrite = True
         if needWrite:
             if points and len(points) >= max(2, options.pmin):
-                geom = 'SRID=4326;LINESTRING(' + ','.join(['{0} {1}'.format(x[0], x[1]) for x in points]) + ')'
+                geom = 'SRID=4326;LINESTRINGM(' + ','.join(['{0} {1} {2}'.format(x[0], x[1], x[2]) for x in points]) + ')'
                 cur.execute('insert into gpx_data (gpx_id, segment_id, track_date, track) values (%s, %s, %s, {0})'.format(geomfromtext),
                         (gpx_id, segment, lastDate, geom))
                 segment += 1
